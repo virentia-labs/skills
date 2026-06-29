@@ -32,6 +32,8 @@ const guarded = createRoute({ path: "/admin", beforeOpen: [checkAuthFx] }); // g
 
 Route shape: `params: Store<Params>`, `isOpened: Store<boolean>`, `isPending: Store<boolean>`, events `open` (call it to navigate), `opened`, `openedOnClient`, `openedOnServer`, `closed`.
 
+These are core stores, so outside React you read them through **`.value` inside a scope** (the 0.3 store API): `scoped(scope, () => profileRoute.params.value.id)`, `router.query.value`, `router.activeRoutes.value[0]`. In components use `useUnit` instead (it unwraps to a plain value).
+
 ```ts
 await scoped(appScope, () =>
   profileRoute.open({ params: { id: 42 }, query: { tab: "posts" }, replace: false })

@@ -13,6 +13,7 @@ Forms built on Virentia core: every field and form is a **model** whose state li
 - A **form** composes fields by a schema and aggregates their values/errors.
 - Errors live in **two channels**: `innerError` (from validators) and `outerError` (from the backend). The visible `error = outerError ?? innerError` — server errors don't erase local validation and vice-versa.
 - Validation runs according to **strategies** (`change` | `blur` | `focus` | `submit` | `manual`) declared per field/form.
+- **Reading values:** every store these models expose (`state`, `values`, `errors`, …) is a Virentia ref store. In plain code read it with `readStoreSnapshot(store)` (exported from `@virentia/forms`) inside a `scoped`/`allSettled` frame, or `store.value`. Snapshot first, then read the field (`readStoreSnapshot(form.values).email`) — there is no direct field access on the store itself. The React hooks read snapshots for you.
 
 ## Fields
 
@@ -25,7 +26,7 @@ const email = createField("", {
 });
 ```
 
-Field stores (read via the React hook or `scoped`): `state` (value), `error`, `innerError`, `outerError`, `meta`, `isFocused`, `isValid`, `isValidationPending` (plural aliases `errors`/`innerErrors`/`outerErrors` exist too — the React hooks expose the plural names).
+Field stores (read with `readStoreSnapshot` in a scope, or via the React hook): `state` (value), `error`, `innerError`, `outerError`, `meta`, `isFocused`, `isValid`, `isValidationPending` (plural aliases `errors`/`innerErrors`/`outerErrors` exist too — the React hooks expose the plural names).
 Field **async methods** (return a promise — `await` them): `fill(value)`, `reset()`, `validate()`, `setInnerErrors(e)`, `setOuterErrors(e)`, `clearInnerErrors()`, `clearOuterErrors()`. `read()` returns the current value (not a promise).
 Field **event callables** (fire them, scope-bound — they run the matching reactions): `focus`, `blur`, `changeMeta`. These are events, **not** async methods.
 Field events to react to: `changed`, `focused`, `blurred`, `validated`, `validationFailed`, `errorsChanged`.

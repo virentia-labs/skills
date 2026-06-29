@@ -139,7 +139,7 @@ The `scope` arg is optional; without it the cache searches every scope it knows.
 interface ModelContext<Props, Key = undefined> {
   readonly scope: Scope;
   readonly owner: Owner;
-  readonly props: StoreWritable<Props>;   // reactive — read latest props without recreating the model
+  readonly props: ReactiveWritable<Props>; // reactive — read latest props without recreating the model
   readonly mounted: EventCallable<void>;  // fires on mount
   readonly unmounted: EventCallable<void>;// fires on unmount
   readonly mounts: StoreWritable<number>; // live mounted-view count (useful for cached models)
@@ -153,7 +153,7 @@ Use lifecycle units **inside the model** (load on `mounted`, pause when `mounts`
 function createChatModel({ props, mounted, key }: ModelContext<Props, string>) {
   const messages = store({ items: [] as string[] });
   const loadFx = effect(async (id: string) => fetchMessages(id));
-  reaction({ on: mounted, run() { void loadFx(props.value.chatId); } });
+  reaction({ on: mounted, run() { void loadFx(props.chatId); } });
   return { loading: loadFx.pending, messages };
 }
 ```
