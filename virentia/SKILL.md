@@ -20,6 +20,7 @@ A model is a plain factory function that wires six primitives. It does **not** k
 | **effect** | "what external async work runs?" | request/timer/worker with a lifecycle (start, success, fail, pending) |
 | **reaction** | "which rule connects things?" | a named rule: read stores, write stores, call effects |
 | **scope** | "where do values live for THIS run?" | one concrete value map (app instance, test, request, cached screen) |
+| **dependency** | "what external instance does this scope use?" | per-scope injectable (API client, clock, logger) — wiring, **not state**; never serialized/hydrated |
 | **owner** | "when is this work detached?" | lifetime boundary for runtime-created models |
 
 **Split responsibility is the whole point.** Stores remember. Events report. Effects do async. Reactions decide. Keeping these separate is what makes the model testable, reusable on the server, and changeable without regressions.
@@ -113,7 +114,7 @@ reaction({ on: [saved, cancelled], run() { modalOpen.value = false; } });
 reaction(() => { canSubmit.value = online.value && query.value.trim().length > 2; });
 ```
 - Explicit `{ on, run }`: runs **only** when a listed unit fires; receives its payload; does **not** run at creation.
-- Auto `reaction(fn)` / `{ run }`: runs once immediately, re-runs when any store it read changes; dependencies refresh each run (branch-aware) and are tracked **per scope** (independent per scope, never cross-triggering).
+- Auto `reaction(fn)` / `{ run }`: runs once immediately, re-runs when any store it read changes; dependencies refresh each run (branch-aware). **Global by default** — re-runs on a change in *any* scope, reading that firing scope's value. Per-scope binding + per-scope dependency isolation is opt-in via `scope:` (never inferred from the ambient scope at creation).
 - `reaction(...)` returns `{ stop() }`. Detach with `.stop()`, or register inside an `owner` to dispose together.
 
 Pick explicit when the event is the reason; pick auto when "this value should always reflect that state."
@@ -149,6 +150,18 @@ socket.on("message", scoped(appScope).wrap((msg) => { messages.value = [...messa
 getCurrentScope();                     // Scope | null (active scope in context)
 ```
 Rule of thumb: **`allSettled` at deliberate boundaries** (you have the scope and a unit), **`scoped` for plain code touching stores**, **`scoped().wrap` for callbacks handed to other libraries**.
+
+### dependency — per-scope injectable (not state)
+```ts
+const api = dependency<ApiClient>("api");          // definition; instance lives in a scope
+
+const loadFx = effect(async (id: string) => api.value.get(id));   // read .value under a scope
+
+const appScope  = scope({ deps: [[api, new RealApiClient()]] });  // provide at creation
+const testScope = scope();
+provideDependency(testScope, api, new FakeApiClient());           // or imperatively
+```
+For anything a scope should **own but never persist**: HTTP clients, sockets, clocks/timers, random sources, loggers, feature flags. Read `dep.value` inside an effect handler / reaction body / `scoped()`. **Not reactive** (a dep doesn't change over a scope's life) and **not serialized/hydrated** — it lives in `scope.deps`, not `scope.values`, so SSR snapshots skip it (re-provide the instance on each side of the boundary). Reading a dep the scope never provided throws an actionable error. Use a `store` (not a dependency) for state the scope must remember and serialize.
 
 ### owner — lifetime & cleanup
 ```ts
@@ -195,6 +208,7 @@ reaction({ on: opened, run() { first(); second(); } });
 - Async (fetch, timer, worker)? → `effect`; show loading via `effect.pending`, errors via `effect.fail`.
 - "When X, do Y"? → `reaction({ on: X, run })`. "Y should always mirror state"? → `reaction(() => ...)`.
 - Need an isolated run (test/SSR/widget)? → `scope()` + `allSettled`.
+- Need an external instance the scope owns but must not serialize (API client, socket, clock)? → `dependency` + `scope({ deps })`.
 - Model lives only while a UI piece exists? → `owner` (+ the React/Vue `component`/`useModel` helpers, which create the owner for you).
 - Big/rarely-used model? → `lazyModel`.
 
@@ -206,6 +220,8 @@ reaction({ on: opened, run() { first(); second(); } });
 - ❌ global mutable value shared across instances → ✅ a `store` read in a `scope`.
 - ❌ relying on which sibling reaction runs first → ✅ explicit nested calls or react to committed state.
 - ❌ reading/writing `.value` in plain code with no scope → ✅ wrap in `scoped`/`allSettled`.
+- ❌ a module-level singleton API client (untestable, shared across scopes) → ✅ a `dependency` provided per `scope`.
+- ❌ stashing a non-serializable instance (client, socket) in a `store` → ✅ a `dependency` (kept out of the SSR snapshot).
 
 ## Package map (use the matching skill)
 
