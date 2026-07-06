@@ -101,9 +101,9 @@ Exposed units (react to them like any event/store):
 reaction({ on: searchFx.doneData, run(items) { results.value = items; } });
 // pending/inFlight publish IMMEDIATELY (not transactional) — UI loading is instant.
 ```
-The handler gets an `AbortSignal`; disposing the owner that created a call aborts it. Use effects for **anything async** — never `await` inside a reaction body for domain work.
+The handler gets an `AbortSignal`; disposing the owner that created a call aborts it. Use effects for **anything external/async** (fetch, timer, worker). Don't put a raw `await fetch()` in a reaction — but an *async reaction body* may `await` effects to sequence steps (see below).
 
-### reaction — rules (two forms)
+### reaction — rules (sync + async)
 ```ts
 // Explicit `on` — when the TRIGGER carries meaning (an event/effect/lifecycle unit).
 reaction({ on: queryChanged, run(text) { query.value = text; } });
@@ -113,10 +113,22 @@ reaction({ on: [saved, cancelled], run() { modalOpen.value = false; } });
 reaction(() => { canSubmit.value = online.value && query.value.trim().length > 2; });
 ```
 - Explicit `{ on, run }`: runs **only** when a listed unit fires; receives its payload; does **not** run at creation.
-- Auto `reaction(fn)` / `{ run }`: runs once immediately, re-runs when any store it read changes; dependencies refresh each run (branch-aware).
+- Auto `reaction(fn)` / `{ run }`: runs once immediately, re-runs when any store it read changes; dependencies refresh each run (branch-aware) and are tracked **per scope** (independent per scope, never cross-triggering).
 - `reaction(...)` returns `{ stop() }`. Detach with `.stop()`, or register inside an `owner` to dispose together.
 
 Pick explicit when the event is the reason; pick auto when "this value should always reflect that state."
+
+**Async bodies** — an `async run` *sequences* async steps of one rule. Just `await` effects: an effect call runs in the reaction's scope and awaiting it keeps that scope for the next step, so you write plain `await someFx(payload)` — **no `allSettled`, no `scope`**:
+```ts
+reaction({ on: checkoutRequested, async run(order, { signal }) {
+  await reserveFx(order);
+  signal.throwIfAborted();                 // cancel-previous: a newer run aborts this one
+  await chargeFx(order);
+} });
+reaction(async () => { const id = currentId.value; await loadFx(); preview.value = details.value[id]; }); // auto: tracks reads AFTER the await too
+```
+- Body gets `{ scope, signal }`: `signal` aborts on the next fire in the same scope (switch / cancel-previous) or on `stop()` — gate steps with `signal.throwIfAborted()`. You rarely need `scope`; use it only for a deliberate `allSettled(fx, { scope })` (awaiting a whole downstream graph).
+- The scope survives an awaited **effect**, not a raw `await fetch()` — external async must be an effect. `allSettled` at the boundary awaits the whole body (incl. fire-and-forget effects). Auto async tracks the reaction's own reads **before and after** the await (a `computed`'s internals stay with the computed).
 
 ### scope — where values live & boundaries
 ```ts
@@ -189,7 +201,7 @@ reaction({ on: opened, run() { first(); second(); } });
 ## Anti-patterns
 
 - ❌ `setCount`/`updateName` events → ✅ `incremented`/`nameChanged`.
-- ❌ `await fetch()` inside a reaction for domain work → ✅ an `effect` + reaction on `doneData`/`failData`.
+- ❌ raw `await fetch()` inside a reaction → ✅ wrap it in an `effect`; an async reaction body may then `await someFx()` to sequence steps (or react on `doneData`/`failData`).
 - ❌ loading/error state stored in the component → ✅ `effect.pending` / `effect.fail`.
 - ❌ global mutable value shared across instances → ✅ a `store` read in a `scope`.
 - ❌ relying on which sibling reaction runs first → ✅ explicit nested calls or react to committed state.

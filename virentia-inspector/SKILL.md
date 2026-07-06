@@ -32,6 +32,33 @@ if (import.meta.env.DEV) {
 ```
 Bridge methods: `sendGraph()` (refresh the graph), `setBreakpoints(nodeIds)`, `snapshot()`, `open()`, `dispose()` (use in tests/HMR teardown).
 
+## Connect from React Native / a non-browser host
+
+The bridge doesn't depend on `window`/`BroadcastChannel` — it works anywhere a WHATWG `WebSocket` exists (React Native, workers, Node, Deno, Bun). Point `inspectorUrl` at the CLI host and run the CLI with `--host 0.0.0.0` so the device can reach it:
+
+```ts
+import { installVirentiaDevtools } from "@virentia/core/devtools";
+
+if (__DEV__) {
+  installVirentiaDevtools({ appName: "Checkout", inspectorUrl: "http://192.168.1.10:5174" });
+}
+// CLI: pnpm exec virentia-inspector --host 0.0.0.0 --port 5174
+```
+
+No global `WebSocket`, or need a custom pipe? Pass a `transport` explicitly:
+
+```ts
+import { createWebSocketTransport, installVirentiaDevtools } from "@virentia/core/devtools";
+
+installVirentiaDevtools({
+  appName: "Checkout",
+  transport: createWebSocketTransport("ws://192.168.1.10:5174/__virentia_devtools", {
+    webSocket: MyWebSocket, // inject a constructor (e.g. the `ws` package) where there is no global one
+  }),
+});
+```
+`createWebSocketTransport(url, { webSocket?, reconnectDelay?, maxQueue? })` is a ready-made, runtime-agnostic transport (auto-reconnect + buffering). `createRelayTransport(inspectorUrl)` builds the default one from an HTTP URL. `transport: null` disables the relay (in-page transports only).
+
 ## Connect an Effector app (over the wire)
 
 ```ts
