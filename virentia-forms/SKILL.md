@@ -13,7 +13,7 @@ Forms built on Virentia core: every field and form is a **model** whose state li
 - A **form** composes fields by a schema and aggregates their values/errors.
 - Errors live in **two channels**: `innerError` (from validators) and `outerError` (from the backend). The visible `error = outerError ?? innerError` — server errors don't erase local validation and vice-versa.
 - Validation runs according to **strategies** (`change` | `blur` | `focus` | `submit` | `manual`) declared per field/form.
-- **Reading values:** every store these models expose (`state`, `values`, `errors`, …) is a Virentia ref store. In plain code read it with `readStoreSnapshot(store)` (exported from `@virentia/forms`) inside a `scoped`/`allSettled` frame, or `store.value`. Snapshot first, then read the field (`readStoreSnapshot(form.values).email`) — there is no direct field access on the store itself. The React hooks read snapshots for you.
+- **Reading values:** every store these models expose (`state`, `values`, `errors`, …) is a Virentia ref store. In plain code read it with `readStoreSnapshot(store)` (exported from `@virentia/forms`) inside a `scoped` frame, or `store.value`. Snapshot first, then read the field (`readStoreSnapshot(form.values).email`) — there is no direct field access on the store itself. The React hooks read snapshots for you.
 
 ## Fields
 

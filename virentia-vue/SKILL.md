@@ -25,7 +25,7 @@ const appScope = scope();
 </template>
 ```
 
-Or, inside your own `setup`, call `provideScope(appScope)` instead of rendering the component. `useProvidedScope(): Scope` reads it (throws if absent) — use to pass the scope into `allSettled`, caches, adapters. (No optional variant — it always throws when missing.)
+Or, inside your own `setup`, call `provideScope(appScope)` instead of rendering the component. `useProvidedScope(): Scope` reads it (throws if absent) — use to pass the scope into `scoped`, caches, adapters. (No optional variant — it always throws when missing.)
 
 ## useUnit — read stores (refs), bind callables
 

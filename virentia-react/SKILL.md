@@ -28,11 +28,11 @@ export function App() {
 }
 ```
 
-`useProvidedScope(): Scope` reads it (throws if absent) — use when you must pass the scope into boundary helpers (`allSettled`, caches, adapters):
+`useProvidedScope(): Scope` reads it (throws if absent) — use when you must pass the scope into boundary helpers (`scoped`, caches, adapters):
 
 ```tsx
 const scope = useProvidedScope();
-const onClick = () => allSettled(saved, { scope });
+const onClick = () => scoped(scope, () => saved());
 ```
 
 ## useUnit — read stores, bind callables

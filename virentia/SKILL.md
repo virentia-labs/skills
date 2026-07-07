@@ -53,7 +53,7 @@ One event can drive several reactions, so the model never collapses into a pile 
 3. **One event, many rules.** When an event has several consequences, write several reactions, not one fat handler.
 4. **Keep imperative code at boundaries and inside named rules.** Effect handlers are normal async functions; reaction bodies are normal code. The *structure* is declarative, the *bodies* can be imperative.
 5. **Never store loading/error in the UI.** Use `effect.pending` and the effect's `fail`/`failData` units.
-6. **Values live in a scope.** Reading/writing a store outside a reaction requires a scope frame (`scoped`/`allSettled`). Tests create a `scope()`.
+6. **Values live in a scope.** Reading/writing a store outside a reaction requires a scope frame (`scoped`). Tests create a `scope()`.
 7. **Runtime-created models get an owner** so reactions/subscriptions are cleaned up when the chat/tab/modal closes.
 
 ## API formulas
@@ -119,7 +119,7 @@ reaction(() => { canSubmit.value = online.value && query.value.trim().length > 2
 
 Pick explicit when the event is the reason; pick auto when "this value should always reflect that state."
 
-**Async bodies** — an `async run` *sequences* async steps of one rule. Just `await` effects: an effect call runs in the reaction's scope and awaiting it keeps that scope for the next step, so you write plain `await someFx(payload)` — **no `allSettled`, no `scope`**:
+**Async bodies** — an `async run` *sequences* async steps of one rule. Just `await` effects: an effect call runs in the reaction's scope and awaiting it keeps that scope for the next step, so you write plain `await someFx(payload)` — **just `await` the unit directly, no `scope` needed**:
 ```ts
 reaction({ on: checkoutRequested, async run(order, { signal }) {
   await reserveFx(order);
@@ -128,28 +128,38 @@ reaction({ on: checkoutRequested, async run(order, { signal }) {
 } });
 reaction(async () => { const id = currentId.value; await loadFx(); preview.value = details.value[id]; }); // auto: tracks reads AFTER the await too
 ```
-- Body gets `{ scope, signal }`: `signal` aborts on the next fire in the same scope (switch / cancel-previous) or on `stop()` — gate steps with `signal.throwIfAborted()`. You rarely need `scope`; use it only for a deliberate `allSettled(fx, { scope })` (awaiting a whole downstream graph).
-- The scope survives an awaited **effect**, not a raw `await fetch()` — external async must be an effect. `allSettled` at the boundary awaits the whole body (incl. fire-and-forget effects). Auto async tracks the reaction's own reads **before and after** the await (a `computed`'s internals stay with the computed).
+- Body gets `{ scope, signal }`: `signal` aborts on the next fire in the same scope (switch / cancel-previous) or on `stop()` — gate steps with `signal.throwIfAborted()`. You rarely need `scope`; use it only for a deliberate `scoped(scope, () => fx())` (awaiting a whole downstream graph).
+- The scope survives an awaited **effect**, not a raw `await fetch()` — external async must be an effect. A `scoped(scope, () => …)` at the boundary awaits the whole body (incl. fire-and-forget effects). Auto async tracks the reaction's own reads **before and after** the await (a `computed`'s internals stay with the computed).
 
 ### scope — where values live & boundaries
 ```ts
 const appScope = scope();                              // fresh value map
 const test = scope({ values: new Map([[count, 10]]) }); // seed values
 
-// allSettled — explicit boundary; waits for async graph work to settle. Best for tests/SSR/loaders.
-await allSettled(model.incremented, { scope: appScope, payload: 2 });
+// scoped at a boundary — its promise waits for the async graph the callback triggers to settle. Best for tests/SSR/loaders.
+await scoped(appScope, () => model.incremented(2));
 
 // scoped — short frame so plain code can read/write stores (incl. after await).
 scoped(appScope, () => { count.value += 1; });
 const run = scoped(appScope);          // reusable runner
 await run(() => searchFx("docs"));
 
-// scoped().wrap — capture a scope and reopen it when an EXTERNAL library calls you later.
-socket.on("message", scoped(appScope).wrap((msg) => { messages.value = [...messages.value, msg]; }));
+// scoped().wrap — capture the CURRENT scope and reopen it when an EXTERNAL library calls you later.
+// `scoped()` with no args captures the active scope (a reaction body / effect handler); no need to name it.
+socket.on("message", scoped().wrap((msg) => { messages.value = [...messages.value, msg]; }));
 
-getCurrentScope();                     // Scope | null (active scope in context)
+getCurrentScope();                     // Scope | null — rarely needed; prefer scoped() to capture-and-reuse
 ```
-Rule of thumb: **`allSettled` at deliberate boundaries** (you have the scope and a unit), **`scoped` for plain code touching stores**, **`scoped().wrap` for callbacks handed to other libraries**.
+Rule of thumb: **`scoped(scope, () => unit(payload))` at deliberate boundaries** (its promise waits for the async graph to settle), **`scoped(scope, fn)` for plain code touching stores**, **`scoped().wrap` for callbacks handed to other libraries**.
+
+**Scope rules — don't lose the scope across `await`:**
+1. Reads/writes need a scope: `store.value`, `event()`, `effect()`, `dependency.value` throw `Scope is required` with none active.
+2. A scope is active inside `scoped(...)`, effect handlers, and reaction bodies (+ their synchronous calls). A unit runs in the scope its source fired in.
+3. **Awaiting a unit keeps the scope** — after `await someFx()` / `await someEvent()` the continuation is still in the same scope (effects and events restore it on settle). So reading a store right after is fine.
+4. **A raw `await` drops it** — `await fetch()` / `await delay()` / `await anyPromise()` leaves no scope; the next store read throws. Wrap external async in an `effect`.
+5. At boundaries name the scope: `scoped(scope, () => unit(payload))`, `scoped(scope, fn)`. For external callbacks capture the current scope with `scoped().wrap(cb)` (no args → captures the active scope).
+
+→ Inside a reaction/effect, only ever `await` **units** (`someFx()`, `someEvent()`) or a `scoped(...)`. The moment you `await` a bare promise you've left the scope — move it into an effect.
 
 ### dependency — per-scope injectable (not state)
 ```ts
@@ -184,7 +194,7 @@ Also: `getOwner()`, `withOwner(owner, fn)` (register cleanup on an existing owne
 ```ts
 const chat = lazyModel(() => import("./chat.model").then(m => m.createChatModel()));
 reaction({ on: chat.opened, run(p) { currentId.value = p.chatId; } });  // subscribe before load
-await allSettled(chat.opened, { scope: appScope, payload: { chatId: "support" } });
+await scoped(appScope, () => chat.opened({ chatId: "support" }));
 chat.pending;  // Store<boolean>, true while the module imports
 ```
 You may subscribe to its events/effect-lifecycle units before load; store **reads** stay synchronous, so read lazy stores only after the model has loaded.
@@ -207,7 +217,7 @@ reaction({ on: opened, run() { first(); second(); } });
 - Something happened / a command? → `event` (fact or intent).
 - Async (fetch, timer, worker)? → `effect`; show loading via `effect.pending`, errors via `effect.fail`.
 - "When X, do Y"? → `reaction({ on: X, run })`. "Y should always mirror state"? → `reaction(() => ...)`.
-- Need an isolated run (test/SSR/widget)? → `scope()` + `allSettled`.
+- Need an isolated run (test/SSR/widget)? → `scope()` + `scoped`.
 - Need an external instance the scope owns but must not serialize (API client, socket, clock)? → `dependency` + `scope({ deps })`.
 - Model lives only while a UI piece exists? → `owner` (+ the React/Vue `component`/`useModel` helpers, which create the owner for you).
 - Big/rarely-used model? → `lazyModel`.
@@ -219,7 +229,8 @@ reaction({ on: opened, run() { first(); second(); } });
 - ❌ loading/error state stored in the component → ✅ `effect.pending` / `effect.fail`.
 - ❌ global mutable value shared across instances → ✅ a `store` read in a `scope`.
 - ❌ relying on which sibling reaction runs first → ✅ explicit nested calls or react to committed state.
-- ❌ reading/writing `.value` in plain code with no scope → ✅ wrap in `scoped`/`allSettled`.
+- ❌ reading/writing `.value` in plain code with no scope → ✅ wrap in `scoped`.
+- ❌ calling a unit from a `setInterval`/`addEventListener`/socket callback (scope lost → `Scope is required`) → ✅ `scoped().wrap(cb)` (no args captures the current scope). See the scope-loss guide.
 - ❌ a module-level singleton API client (untestable, shared across scopes) → ✅ a `dependency` provided per `scope`.
 - ❌ stashing a non-serializable instance (client, socket) in a `store` → ✅ a `dependency` (kept out of the SSR snapshot).
 
@@ -227,8 +238,9 @@ reaction({ on: opened, run() { first(); second(); } });
 
 - Rendering: **virentia-react**, **virentia-vue** (`ScopeProvider`, `useUnit`, `useModel`, `component`).
 - Forms: **virentia-forms** (`createForm`, fields, validation, wizards).
-- Routing: **virentia-router** (`createRoute`, `createRouter`, query tracking, React/RN views).
+- Routing: **virentia-router** (`route`, `router`, query tracking, React/RN views).
 - Existing Effector code: **virentia-effector** (`associate`, `fool`).
 - Devtools: **virentia-inspector** (`installVirentiaDevtools`, `connectEffector`).
+- Deep-mutable state: **virentia-mutable** (`mutableStore`) — a `.value` you mutate in place with per-keypath reactivity. Reach for it **only** when state is large or deeply nested and edited in place (editors, big tables, deep forms); for ordinary or flat state a plain `store`/`reactive` + `computed` is the default — don't migrate stores to it without a concrete deep-editing reason.
 
-Most app code should speak only stores/events/effects/reactions/scopes/owners. Drop to the kernel (`createNode`, `ctx.launch`) only when writing adapters, devtools, or a new primitive.
+Most app code should speak only stores/events/effects/reactions/scopes/owners. Drop to the kernel — `node`, `run`, `ctx.launch`, tracking (`trackNode`/`collectNodes`/`isTracking`), scope access (`requireActiveScope`), transactions (`writeTransactionStore`) — only when writing adapters, devtools, or a new primitive/store. These live in **`@virentia/core/internal`** (a separate entry sharing core's singleton modules), not the main entry; the main entry exposes only kernel **types**.
