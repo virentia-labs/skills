@@ -52,6 +52,22 @@ const [c, inc] = useUnit([counter.count, counter.incremented] as const);
 
 In `<script>` read `count.value`; in `<template>` write `{{ count }}` (auto-unwraps). A ref nested in a non-destructured object does **not** auto-unwrap — that's why you destructure.
 
+### `@@shape` — bind only part of an object
+
+An object that also carries **non-units** (helper methods, config) declares its bindable units via a `SHAPE` (`"@@shape"`) property; `useUnit`/`useModel`/`component` bind through that instead of walking every key, and never expose the marker. Build it **once** (units must be stable). The value is the shape object directly, or a function returning it. Shapes **nest to any depth**. Same protocol for a model field read via `useModel`/`component` → the field arrives as its bound units (stores as refs; pull each nested ref into its own binding to auto-unwrap).
+
+```ts
+import { SHAPE, useUnit } from "@virentia/vue";
+const counter = {                      // built once, not per setup
+  count, incremented,
+  isZero: () => count.value === 0,     // helper, not bound
+  [SHAPE]: { count, incremented },
+};
+const { count, incremented } = useUnit(counter);  // count is a ref; isZero not bound
+```
+
+Only reach for it when a (sub-)model mixes units with non-units; a plain record of units unwraps without it.
+
 ## useModel — create/prepare a model
 
 Key difference from React: **props are passed as a getter or ref (`MaybeRefOrGetter`)**, so prop changes flow into `context.props`.
@@ -101,6 +117,18 @@ const { count, clicked } = props.model;   // count is a ref → auto-unwraps in 
 ```
 
 Cached variant: `component({ cache, key: (props) => props.id, model, view })`.
+
+### `mapProps` — external props → model props
+
+By default the component's external props are the model's props. Add `mapProps: (props) => modelProps` to make them differ. It runs in `setup` (once initially, then on external-prop change), so keep it a **pure transform** (read reactive route/composable values inside the model factory, not here). The view still gets the **external** props; only the model sees the mapped ones. `.create(modelProps)` takes model props directly (no `mapProps`).
+
+```ts
+component({
+  mapProps: (props: { slug: string }) => ({ ...props, uuid: makeUuid() }),
+  model: createPageModel, // ModelContext<{ slug: string; uuid: string }>
+  view: PageView,
+});
+```
 
 ### Controlled / child models — `.create()`
 

@@ -113,7 +113,12 @@ lazyRouteView({ route: profileRoute, view: () => import("./ProfilePage"), fallba
 
 // nested via Outlet (parent route is itself a wrapper)
 routeView({ route: parentRoute, view: () => <Layout><Outlet/></Layout>, children: [childView] });
-// shared layout for siblings: withLayout(Layout, [viewA, viewB])
+
+// layouts:
+withLayout(Layout, [viewA, viewB]);                         // each view gets its own copy (remounts on switch)
+routesView({ routes: [...], layout: AppShell });            // wraps the whole view, mounted once across routes
+const dash = routeViewGroup({ layout: DashLayout, views: [overviewView, reportsView] });
+routesView({ routes: [dash, loginView] });                  // one layout shared across members, kept mounted while switching between them; data only — routesView renders it
 ```
 Inside a view, read params with `useUnit(route.params)`.
 
@@ -148,7 +153,7 @@ A tab press calls `route.open` with its `openPayload`.
 - The app now **owns** history: `createBrowserHistory()` → `appRouter.setHistory(historyAdapter(...))`.
 - `trackQuery` is schema-agnostic (any `safeParse`), not zod-locked, and splits `entered`/`exited` by origin (`*Externally`/`*Programmatically`).
 - `beforeOpen` runs once — a programmatic open's URL echo is recognized as `programmatic` origin and skips guards, so no double-fire.
-- Factory names are bare nouns (no `create` prefix): `route`, `router`, `virtualRoute`, `routerControls`, `routeView`, `routesView`, `lazyRouteView`, `stackNavigator`, `bottomTabsNavigator`.
+- Factory names are bare nouns (no `create` prefix): `route`, `router`, `virtualRoute`, `routerControls`, `routeView`, `routesView`, `routeViewGroup`, `lazyRouteView`, `stackNavigator`, `bottomTabsNavigator`.
 
 ## Habits / gotchas
 

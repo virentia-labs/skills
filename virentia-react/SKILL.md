@@ -58,6 +58,22 @@ return <button disabled={pending} onClick={() => increment(1)}>{count}</button>;
 
 Use `useUnit` for simple components that need a handful of units.
 
+### `@@shape` — bind only part of an object
+
+An object that also carries **non-units** (helper methods, config) declares its bindable units via a `SHAPE` (`"@@shape"`) property; `useUnit`/`useModel`/`component` bind through that instead of walking every key, and never expose the marker. Build it **once** (units must be stable). The value is the shape object directly, or a function returning it. Shapes **nest to any depth** — a member may be a bare record of units or another `@@shape` source. Same protocol for a model field read via `useModel`/`component` → the field arrives as its bound units.
+
+```tsx
+import { SHAPE, useUnit } from "@virentia/react";
+const counter = {                      // built once, not per render
+  count, incremented,
+  isZero: () => count.value === 0,     // helper, not bound
+  [SHAPE]: { count, incremented },
+};
+const { count, incremented } = useUnit(counter);  // isZero not bound
+```
+
+Only reach for it when a (sub-)model mixes units with non-units; a plain record of units unwraps without it.
+
 ## useModel — create/prepare a model for one component
 
 ```tsx
@@ -98,6 +114,18 @@ export const ChatPanel = component({
 ```
 
 Use `component` when the model belongs to the view; use `useModel` to compose a model inside an existing component.
+
+### `mapProps` — external props → model props
+
+By default the component's external props (JSX) are the model's props. Add `mapProps: (props) => modelProps` to make them differ. It runs **during render**, so it may call hooks (e.g. a router's `useParams`) and fold the result into the model props. The view still gets the **external** props; only the model sees the mapped ones. `.create(modelProps)` takes model props directly (no `mapProps` — it runs outside render).
+
+```tsx
+component({
+  mapProps: (props: { slug: string }) => ({ ...props, uuid: useParams<{ uuid: string }>().uuid }),
+  model: createPageModel, // ModelContext<{ slug: string; uuid: string }>
+  view: ({ model }) => <Article model={model} />,
+});
+```
 
 ### Controlled / child models — `.create()`
 

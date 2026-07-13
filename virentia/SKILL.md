@@ -102,7 +102,7 @@ Exposed units (react to them like any event/store):
 reaction({ on: searchFx.doneData, run(items) { results.value = items; } });
 // pending/inFlight publish IMMEDIATELY (not transactional) — UI loading is instant.
 ```
-The handler gets an `AbortSignal`; disposing the owner that created a call aborts it. Use effects for **anything external/async** (fetch, timer, worker). Don't put a raw `await fetch()` in a reaction — but an *async reaction body* may `await` effects to sequence steps (see below).
+The handler gets an `AbortSignal`. `abort(reason)` cancels in-flight calls **in the current scope only** (other scopes untouched); disposing the owner that created a call aborts all of its in-flight calls. Use effects for **anything external/async** (fetch, timer, worker). Don't put a raw `await fetch()` in a reaction — but an *async reaction body* may `await` effects to sequence steps (see below).
 
 ### reaction — rules (sync + async)
 ```ts
@@ -233,6 +233,16 @@ reaction({ on: opened, run() { first(); second(); } });
 - ❌ calling a unit from a `setInterval`/`addEventListener`/socket callback (scope lost → `Scope is required`) → ✅ `scoped().wrap(cb)` (no args captures the current scope). See the scope-loss guide.
 - ❌ a module-level singleton API client (untestable, shared across scopes) → ✅ a `dependency` provided per `scope`.
 - ❌ stashing a non-serializable instance (client, socket) in a `store` → ✅ a `dependency` (kept out of the SSR snapshot).
+
+## Behaviour notes (semantics worth knowing)
+
+- **Observing a `computed` across scopes.** A scope-less `reaction({ on: computed })` or `computed.subscribe(...)` (no `scope:`) fires whenever a dependency changes in **any** scope — even one where the computed was never read (same as a plain store). A `scope:`-bound reaction is the opt-in exception: it only sees a computed **after** that computed has been read in that scope. So a scoped reaction on an unread computed is silent by design — read it in the scope first, or drop `scope:`.
+- **`reaction({ on: effect })`** delivers the effect's **params** (matching the type), not an internal object.
+- **A throwing store subscriber is contained** — it never stops the other subscribers or the store's reactive propagation. Don't rely on a subscriber's throw surfacing out of the write.
+- **`reactive` objects:** `delete obj.field` removes the key and notifies; `Object.defineProperty` on a `reactive` throws — write fields by assignment.
+- **Effect called with an already-aborted `signal`:** the handler never runs; the effect emits `aborted` then the fail channel (`failed` → `failData` → `settled`), never `started`, and does not bump `pending`/`inFlight`.
+- **`owner()`** surfaces the body's error even if a cleanup throws during the rescue.
+- **A `lazyModel` loader** may read scope state at its **synchronous** start (`const cfg = configStore.value` before the first `await`); the async tail runs detached.
 
 ## Package map (use the matching skill)
 
