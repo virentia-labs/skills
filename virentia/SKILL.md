@@ -104,6 +104,8 @@ reaction({ on: searchFx.doneData, run(items) { results.value = items; } });
 ```
 The handler gets an `AbortSignal`. `abort(reason)` cancels in-flight calls **in the current scope only** (other scopes untouched); disposing the owner that created a call aborts all of its in-flight calls. Use effects for **anything external/async** (fetch, timer, worker). Don't put a raw `await fetch()` in a reaction — but an *async reaction body* may `await` effects to sequence steps (see below).
 
+**`fx.variant(...)` — a separately observable front door to the same effect.** Give a model its own operation over shared work: `requestFx.variant("profileFx")`, or `requestFx.variant("authorizedFx", (id: number) => ({ id, token: token.value }))` to re-type its params (the mapper runs in the calling scope, so reading `token.value` there is correct). The variant has its own `pending`/`doneData`/`failData`/`abort`, and **calling it calls the base**, so the base's lifecycle fires too — `requestFx.pending` aggregates every variant, one `requestFx.failData` reaction covers them all. Aborting a variant cancels its base call (both emit `aborted`). A scope handler override on the base swaps the work for all variants; an override on the variant replaces the delegation, so the base is never called.
+
 ### reaction — rules (sync + async)
 ```ts
 // Explicit `on` — when the TRIGGER carries meaning (an event/effect/lifecycle unit).
@@ -241,6 +243,7 @@ reaction({ on: opened, run() { first(); second(); } });
 - **A throwing store subscriber is contained** — it never stops the other subscribers or the store's reactive propagation. Don't rely on a subscriber's throw surfacing out of the write.
 - **`reactive` objects:** `delete obj.field` removes the key and notifies; `Object.defineProperty` on a `reactive` throws — write fields by assignment.
 - **Effect called with an already-aborted `signal`:** the handler never runs; the effect emits `aborted` then the fail channel (`failed` → `failData` → `settled`), never `started`, and does not bump `pending`/`inFlight`.
+- **Variant lifecycle order follows the nesting:** on start the *variant* fires `started` first (it is what was called), then the base; on settle the *base* finishes first and the variant right after, since the variant awaits the call it made.
 - **`owner()`** surfaces the body's error even if a cleanup throws during the rescue.
 - **A `lazyModel` loader** may read scope state at its **synchronous** start (`const cfg = configStore.value` before the first `await`); the async tail runs detached.
 
