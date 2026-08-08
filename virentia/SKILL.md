@@ -1,11 +1,11 @@
 ---
 name: virentia
-description: Foundational mental model and core API for the Virentia state manager (@virentia/core) — stores, events, effects, reactions, scopes, owners, transactions, lazy models. Use this whenever writing, reviewing, or debugging Virentia model code, or before reaching for any @virentia/* package (react, vue, forms, router, effector, inspector). Teaches the mindset, the API formulas, and the habits that keep business logic a model instead of scattered imperative code.
+description: Foundational mental model and core API for the Virentia reactive stack (@virentia/core) — stores, events, effects, reactions, scopes, owners, transactions, lazy models, and the standard operators in @virentia/core/utils (debounce, throttle, once, previous, reset, status). Use this whenever writing, reviewing, or debugging Virentia model code, or before reaching for any @virentia/* package (react, vue, forms, router, effector, inspector). Teaches the mindset, the API formulas, and the habits that keep business logic a model instead of scattered imperative code.
 ---
 
 # Virentia — core model & mindset
 
-Virentia is a state manager for apps with **complex business logic**. Its goal is not shorter writes — it is **preserving causality**: what happened, which rules ran, which async work started, and which state came out. Every state movement should have **a place and a name**.
+Virentia is a reactive stack for describing **complex business logic**. Its goal is not shorter writes — it is **preserving causality**: what happened, which rules ran, which async work started, and which state came out. Every state movement should have **a place and a name**.
 
 If you find yourself writing `setX`, threading ids through handlers, or letting the UI set loading / catch errors / clear results, stop — that logic belongs in the model.
 
@@ -102,7 +102,7 @@ Exposed units (react to them like any event/store):
 reaction({ on: searchFx.doneData, run(items) { results.value = items; } });
 // pending/inFlight publish IMMEDIATELY (not transactional) — UI loading is instant.
 ```
-The handler gets an `AbortSignal`. `abort(reason)` cancels in-flight calls **in the current scope only** (other scopes untouched); disposing the owner that created a call aborts all of its in-flight calls. Use effects for **anything external/async** (fetch, timer, worker). Don't put a raw `await fetch()` in a reaction — but an *async reaction body* may `await` effects to sequence steps (see below).
+The handler gets an `AbortSignal`. `abort(reason)` cancels in-flight calls **in the current scope only** (other scopes untouched); disposing the owner that created the EFFECT aborts all of its in-flight calls, and disposing the owner that MADE a call aborts that call. Use effects for **anything external/async** (fetch, timer, worker). Don't put a raw `await fetch()` in a reaction — but an *async reaction body* may `await` effects to sequence steps (see below).
 
 **`fx.variant(...)` — a separately observable front door to the same effect.** Give a model its own operation over shared work: `requestFx.variant("profileFx")`, or `requestFx.variant("authorizedFx", (id: number) => ({ id, token: token.value }))` to re-type its params (the mapper runs in the calling scope, so reading `token.value` there is correct). The variant has its own `pending`/`doneData`/`failData`/`abort`, and **calling it calls the base**, so the base's lifecycle fires too — `requestFx.pending` aggregates every variant, one `requestFx.failData` reaction covers them all. Aborting a variant cancels its base call (both emit `aborted`). A scope handler override on the base swaps the work for all variants; an override on the variant replaces the delegation, so the base is never called.
 
@@ -192,14 +192,45 @@ model.dispose();   // detaches reactions/subscriptions, aborts in-flight effects
 ```
 Also: `getOwner()`, `withOwner(owner, fn)` (register cleanup on an existing owner), and `using model = owner(...)` via `Symbol.dispose` where supported. Any model that appears/disappears at runtime (modal, chat, tab, preview) should be created in an owner.
 
+**Disposal cascades and follows the caller.** An owner created inside another owner's body is its child: disposing the parent disposes every child, innermost first. Disposal also aborts the effect calls **made under that owner**, not just calls of effects declared inside it — so a module-scope `loadUserFx` called from a screen model is cancelled (`Effect caller disposed`) when the screen goes away. Only that owner's own calls; a concurrent call from another model keeps running. Every `dispose` is idempotent.
+
 ### lazyModel — code-split a model
 ```ts
 const chat = lazyModel(() => import("./chat.model").then(m => m.createChatModel()));
 reaction({ on: chat.opened, run(p) { currentId.value = p.chatId; } });  // subscribe before load
 await scoped(appScope, () => chat.opened({ chatId: "support" }));
-chat.pending;  // Store<boolean>, true while the module imports
+chat.pending;  // Store<boolean>, true WHILE the module imports
+chat.loaded;   // Store<boolean>, true once the loader produced the model
 ```
 You may subscribe to its events/effect-lifecycle units before load; store **reads** stay synchronous, so read lazy stores only after the model has loaded.
+
+**Gate a read on `loaded`, never on `pending`.** `pending` reads `false` both before and after the import, so it cannot tell "not loaded yet" from "ready". Reading a lazy store while `loaded` is false **throws** `Lazy unit is not loaded yet` — and the types do not stop you, because `LazyModel<Model>` is typed as `Model`. Both flags are per-scope: a scope learns it is loaded once it takes part in a load (its first call of any lazy unit).
+```ts
+const unread = computed(() => (chat.loaded.value ? chat.unread.value : 0));
+```
+
+### utils — standard operators (`@virentia/core/utils`)
+```ts
+import { debounce, throttle, delay, interval, once, previous, reset, status } from "@virentia/core/utils";
+```
+Every operator is per-scope (timers/flags never leak between scopes) and owner-aware (dispose cancels pending timers). Don't hand-roll these — the by-hand versions leak state across scopes.
+
+**Time — operators preserve the source kind** (Event→Event, Store→Store; the derived store holds the last settled value, starting at the source's declaration initial):
+```ts
+const settled = debounce(query, 300);                   // Store<string> — the main form for search inputs
+const throttled = throttle(scrolled, { ms: 100, leading: true });  // Event; trailing hit still fires
+const later = delay(saved, 2000);                       // every hit shifted independently
+const { tick, active } = interval({ ms: 1000, start, stop });      // active: per-scope Store<boolean>
+```
+`debounce(source, { ms, leading: true })` — first hit passes immediately, then silence until a full pause. Awaiting the SOURCE does not include the delayed emission (it is a new root update; downstream failures are reported, never unhandled). Tests: plain `setTimeout` under the hood — `vi.useFakeTimers()` + `advanceTimersByTime` just work.
+
+**Memory** — `once(src, { reset? })` passes the first hit per scope (the fired flag is a store → SSR snapshot carries it); `previous($src, seed?)` trails the source by one change (first change makes the declaration initial the previous value).
+
+**Write** — `reset({ clock, target: [$a, $b] })` restores declaration initials, one transaction, firing scope only. A computed target throws — it has no stored initial.
+
+**Effect state** — `status(fx, { reset? })` → `Store<"initial" | "pending" | "done" | "fail">` (last lifecycle event wins; `"initial"` = no attempt yet in this scope — not expressible from the effect's own units). To aggregate across effects, don't look for an operator: `computed(() => a.inFlight.value + b.inFlight.value > 0)`.
+
+**Deliberately absent — do NOT look for patronum-style operators.** `and/or/equals/some/…` → a `computed` expression. `split/condition/combineEvents/spread` → an imperative reaction body: `if`/`else` over the payload, calls to events you declared; first-match and the rest-branch fall out of ordinary code. `debug` → `reaction({ on: unit, run: v => console.log(v) })`; real tracing is the inspector's job.
 
 ## Transactions — when writes become visible
 
@@ -223,6 +254,8 @@ reaction({ on: opened, run() { first(); second(); } });
 - Need an external instance the scope owns but must not serialize (API client, socket, clock)? → `dependency` + `scope({ deps })`.
 - Model lives only while a UI piece exists? → `owner` (+ the React/Vue `component`/`useModel` helpers, which create the owner for you).
 - Big/rarely-used model? → `lazyModel`.
+- Debounce/throttle/delay a source, first-hit-only, previous value, reset-on-logout, effect status for UI? → the matching operator in `@virentia/core/utils` — never hand-rolled.
+- Tempted by a patronum-style operator (`split`, `combineEvents`, `and`, `spread`)? → it does not exist here on purpose: `computed` for combinators, an imperative reaction body for routing.
 
 ## Anti-patterns
 
@@ -235,6 +268,29 @@ reaction({ on: opened, run() { first(); second(); } });
 - ❌ calling a unit from a `setInterval`/`addEventListener`/socket callback (scope lost → `Scope is required`) → ✅ `scoped().wrap(cb)` (no args captures the current scope). See the scope-loss guide.
 - ❌ a module-level singleton API client (untestable, shared across scopes) → ✅ a `dependency` provided per `scope`.
 - ❌ stashing a non-serializable instance (client, socket) in a `store` → ✅ a `dependency` (kept out of the SSR snapshot).
+- ❌ hand-rolled debounce/once with a module-level timer or `let fired` flag (leaks across scopes/SSR) → ✅ `debounce`/`once` from `@virentia/core/utils`.
+
+## When something throws (failure contract + diagnostics)
+
+An uncaught throw in a reaction follows **ordinary async JS**: statements after it don't run, and the failure reaches whoever awaited the trigger. Concretely — sync and async reactions behave identically:
+
+1. **that branch stops** (nothing downstream of it runs);
+2. the failure is **reported**, never silent;
+3. **independent branches** of the same update still run;
+4. an **awaited** trigger rejects (`AggregateError` if several branches failed).
+
+A fire-and-forget write (`scoped(s, () => { x.value = 1 })`) is awaited by nobody: the failure is logged, not thrown, and never becomes an unhandled rejection — a failing rule cannot kill a Node process. `store.subscribe` callbacks are contained the same way.
+
+The default console report is built to be actionable without devtools:
+```
+[virentia] reaction failed: reaction "connectSocket"
+  declared at: /src/features/auth/model.ts:42:3
+  scope: scope:1
+  propagation path: store "$token" → computed "$authorized" → reaction "connectSocket"
+```
+`declared at` is captured at creation, so even an anonymous reaction points at source. **Name the units you expect to debug** (`store(0, undefined, { name: "$token" })`, `reaction({ name: "connectSocket", … })`) — the path shows ids otherwise.
+
+Route failures elsewhere with `setErrorReporter(fn | null)`; the callback gets a structured `VirentiaFailureReport` (`kind`, `unit`, `declaredAt`, `scope`, `path`, `error`, `message`), so a crash reporter needs no string parsing. `null` restores the console default; a reporter that throws falls back to it rather than taking the update down.
 
 ## Behaviour notes (semantics worth knowing)
 
@@ -245,10 +301,13 @@ reaction({ on: opened, run() { first(); second(); } });
 - **Effect called with an already-aborted `signal`:** the handler never runs; the effect emits `aborted` then the fail channel (`failed` → `failData` → `settled`), never `started`, and does not bump `pending`/`inFlight`.
 - **Variant lifecycle order follows the nesting:** on start the *variant* fires `started` first (it is what was called), then the base; on settle the *base* finishes first and the variant right after, since the variant awaits the call it made.
 - **`owner()`** surfaces the body's error even if a cleanup throws during the rescue.
+- **Owner disposal cascades**: a nested owner is a child, disposed with its parent (innermost first). It also cancels effect calls *made under* that owner, not only calls of effects declared in it.
+- **`lazyModel.pending` cannot gate a read** — it is `false` before AND after the import. Use `loaded`. Reading a lazy store too early throws, and the types allow it.
 - **A `lazyModel` loader** may read scope state at its **synchronous** start (`const cfg = configStore.value` before the first `await`); the async tail runs detached.
 
 ## Package map (use the matching skill)
 
+- Domain entities (lists of server objects with ids): **virentia-models** (`@virentia/core/models` — `model`/`staticModel`, collections, `f.*` fields, relations, indexed queries, unions, `json()`/`rebind`). Prefer it over hand-wiring a store-per-entity or an `owner`-per-entity; a raw `owner` is for non-entity subsystems.
 - Rendering: **virentia-react**, **virentia-vue** (`ScopeProvider`, `useUnit`, `useModel`, `component`).
 - Forms: **virentia-forms** (`createForm`, fields, validation, wizards).
 - Routing: **virentia-router** (`route`, `router`, query tracking, React/RN views).

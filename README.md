@@ -1,12 +1,13 @@
 # Virentia skills
 
-Agent Skills for the [Virentia](https://movpushmov.dev/virentia) state manager. Each folder is a skill (a `SKILL.md` with `name`/`description` frontmatter + guidance) in the standard skills.sh / Claude Agent Skills format. Loaded by name+description; the full body loads when a skill matches the task.
+Agent Skills for the [Virentia](https://movpushmov.dev/virentia) reactive stack. Each folder is a skill (a `SKILL.md` with `name`/`description` frontmatter + guidance) in the standard skills.sh / Claude Agent Skills format. Loaded by name+description; the full body loads when a skill matches the task.
 
 ## Skills
 
 | Skill | Use it for |
 |-------|-----------|
-| [`virentia`](virentia/SKILL.md) | **Start here.** The mental model + `@virentia/core` API (stores, events, effects, reactions, scopes, owners, transactions, lazy models). Every other skill builds on it. |
+| [`virentia`](virentia/SKILL.md) | **Start here.** The mental model + `@virentia/core` API (stores, events, effects, reactions, scopes, owners, transactions, lazy models, `core/utils` operators). Every other skill builds on it. |
+| [`virentia-models`](virentia-models/SKILL.md) | `@virentia/core/models` — domain entities: `model`/`staticModel`, `f.*` field schemas, traits, collections, relations, indexed queries, unions, `json()`/`rebind`/aliases, `onCleanup`, and the `useModel`/`component` integration (`keep`). |
 | [`virentia-react`](virentia-react/SKILL.md) | Rendering models in React (`ScopeProvider`, `useUnit`, `useModel`, `component`, caches). |
 | [`virentia-vue`](virentia-vue/SKILL.md) | Rendering models in Vue 3 (mirrors React; stores come back as refs). |
 | [`virentia-forms`](virentia-forms/SKILL.md) | `@virentia/forms` — fields, forms, validation, error channels, wizards, zod adapters, React hooks. |
@@ -19,4 +20,4 @@ Agent Skills for the [Virentia](https://movpushmov.dev/virentia) state manager. 
 
 ## How they relate
 
-`virentia` is foundational — read it before any package skill. The package skills assume that mental model and only cover their own surface. `virentia-react`/`virentia-vue` share the same model/component/cache semantics; `virentia-forms` and `virentia-router` are core models with React (and RN) bindings; `virentia-storage` persists any core store into a storage backend; `virentia-mutable` is a specialized store variant for deep in-place editing (not a default — reach for it only when the state shape calls for it); `virentia-effector` and `virentia-inspector` are integration seams.
+`virentia` is foundational — read it before any package skill. The package skills assume that mental model and only cover their own surface. `virentia-models` is the entity layer inside core itself (the `/models` subpath): reach for it whenever the app manages lists of server entities instead of hand-wiring stores per entity. `virentia-react`/`virentia-vue` share the same model/component/cache semantics; `virentia-forms` and `virentia-router` are core models with React (and RN) bindings; `virentia-storage` persists any core store into a storage backend; `virentia-mutable` is a specialized store variant for deep in-place editing (not a default — reach for it only when the state shape calls for it); `virentia-effector` and `virentia-inspector` are integration seams.
